@@ -3,7 +3,9 @@
     <p>
         Tempo de geração:
         <span class="badge timing <?= $elapsedMs < 100 ? 'fast' : '' ?>"><?= $elapsedMs ?> ms</span>
-        <span class="muted">(agregados de avaliação e vendas recalculados a cada request)</span>
+        <span class="muted">
+            (cache Redis: <?= $cacheHit ? 'hit' : 'miss; dados recalculados e armazenados por 5 minutos' ?>)
+        </span>
     </p>
 
     <form class="filters" method="get" action="/catalogo">

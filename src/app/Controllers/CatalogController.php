@@ -1,29 +1,29 @@
 <?php
 
 /**
- * Catálogo de produtos.
- *
- * ATENÇÃO: a cada requisição os agregados de avaliação e vendas são
- * recalculados do zero sobre as tabelas inteiras, mesmo que esses dados
- * só mudem de forma esporádica. Faz parte do desafio introduzir uma
- * camada de cache (Redis) para essa leitura, incluindo a invalidação
- * correta quando um produto é atualizado em update().
+ * Catálogo de produtos com cache-aside no Redis.
  */
 class CatalogController
 {
+    private const CACHE_TTL_SECONDS = 300;
+
+    private bool $cacheHit = false;
+
     public function index(): void
     {
         $category = !empty($_GET['category']) ? $_GET['category'] : null;
         $start = microtime(true);
 
-        $products = $this->fetchCatalog($category);
+        $products = $this->fetchCatalogFromCache($category);
 
         $elapsedMs = round((microtime(true) - $start) * 1000);
+        header('X-Catalog-Cache: ' . ($this->cacheHit ? 'HIT' : 'MISS'));
 
         render('catalog', [
             'products' => $products,
             'category' => $category,
             'elapsedMs' => $elapsedMs,
+            'cacheHit' => $this->cacheHit,
             'categories' => $this->categories(),
         ]);
     }
@@ -40,13 +40,56 @@ class CatalogController
             SET price = COALESCE(:price, price),
                 stock = COALESCE(:stock, stock)
             WHERE id = :id
+            RETURNING category
         ');
         $stmt->execute(['price' => $price, 'stock' => $stock, 'id' => $id]);
+        $category = $stmt->fetchColumn();
+
+        if ($category !== false) {
+            RedisClient::connection()->del(
+                $this->catalogCacheKey(null),
+                $this->catalogCacheKey((string) $category)
+            );
+        }
 
         header('Content-Type: application/json');
         echo json_encode([
-            'message' => 'Produto atualizado. Se o catálogo estiver em cache, ele precisa refletir esta mudança.',
+            'message' => 'Produto atualizado e cache do catálogo invalidado.',
         ]);
+    }
+
+    private function fetchCatalogFromCache(?string $category): array
+    {
+        $redis = RedisClient::connection();
+        $cacheKey = $this->catalogCacheKey($category);
+        $cached = $redis->get($cacheKey);
+
+        if ($cached !== false) {
+            $products = json_decode($cached, true);
+            if (is_array($products)) {
+                $this->cacheHit = true;
+                return $products;
+            }
+
+            // Um valor inválido não deve impedir a recuperação pelo banco.
+            $redis->del($cacheKey);
+        }
+
+        $products = $this->fetchCatalog($category);
+        $redis->setex(
+            $cacheKey,
+            self::CACHE_TTL_SECONDS,
+            json_encode($products, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION)
+        );
+
+        return $products;
+    }
+
+    private function catalogCacheKey(?string $category): string
+    {
+        return $category === null
+            ? 'catalog:products:all'
+            : 'catalog:products:category:' . hash('sha256', $category);
     }
 
     private function fetchCatalog(?string $category): array

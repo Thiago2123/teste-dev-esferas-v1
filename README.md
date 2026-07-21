@@ -30,6 +30,15 @@ docker compose exec app php db/seed.php
 Isso gera aproximadamente 5.000 clientes, 3.000 produtos, 200.000 pedidos (~500.000 itens de
 pedido) e 60.000 avaliações. Leva alguns minutos.
 
+Os índices de performance em `db/indexes.sql` são aplicados automaticamente na criação de
+um banco novo. Para aplicá-los em um volume que já existia antes desse arquivo:
+
+```bash
+docker compose up -d
+docker compose exec -T db psql -U teste_esferas -d teste_esferas \
+  -f /docker-entrypoint-initdb.d/02-indexes.sql
+```
+
 ## Recriar o banco do zero
 
 ```bash
@@ -43,6 +52,7 @@ docker compose exec app php db/seed.php
 ```
 docker/php/        Dockerfile e vhost do Apache
 db/schema.sql       Schema inicial (sem índices adicionais — parte do desafio)
+db/indexes.sql      Índices adicionais da solução
 db/seed.php         Script de geração de massa de dados
 src/public/         Document root (front controller index.php)
 src/app/            Controllers, Views e classes de infraestrutura (Database, RedisClient)
